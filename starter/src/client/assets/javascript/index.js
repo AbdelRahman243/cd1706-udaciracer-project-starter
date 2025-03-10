@@ -94,11 +94,17 @@ async function handleCreateRace() {
     const trackID = store.track_id;
 
     try {
+		console.log(`this errrorrrr store.track_id is ${store.track_id} ${trackID}`)
+		console.log(`this errrorrrr store.track_id is ${store.player_id} ${playerID}`)
         const race = await createRace(playerID, trackID);
+        store.race_id = race.ID;
 
-        store.race_id = race.id;
+		if (!race) {
+            throw new Error("Race creation failed, no race returned.");
+        }
 
         console.log("RACE: ", race);
+		console.log(`htis errrrorrr store.race_id is ${store.race_id}`)
 
         await runCountdown();
         await startRace(store.race_id);
@@ -113,6 +119,12 @@ function runRace(raceID) {
         let raceInterval = setInterval(async () => {
             try {
                 const raceInfo = await getRace(raceID);
+
+                if (!raceInfo) {
+                    clearInterval(raceInterval);
+                    reject("Race data is missing.");
+                    return;
+                }
 
                 if (raceInfo.status === "in-progress") {
                     renderAt('#leaderBoard', raceProgress(raceInfo.positions));
@@ -201,8 +213,6 @@ function renderRacerCars(racers) {
 
 function renderRacerCard(racer) {
 	const { id, driver_name, top_speed, acceleration, handling } = racer
-	// OPTIONAL: There is more data given about the race cars than we use in the game, if you want to factor in top speed, acceleration, 
-	// and handling to the various vehicles, it is already provided by the API!
 	return `<h4 class="card racer" id="${id}">${driver_name}</h3>`
 }
 
@@ -256,30 +266,37 @@ function renderRaceStartView(track) {
 }
 
 function resultsView(positions) {
-	userPlayer.driver_name += " (you)"
-	let count = 1
-  
-	const results = positions.map(p => {
-		return `
-			<tr>
-				<td>
-					<h3>${count++} - ${p.driver_name}</h3>
-				</td>
-			</tr>
-		`
-	})
+    const userPlayer = positions.find(e => e.id === parseInt(store.player_id));
+    userPlayer.driver_name += " (you)";
 
-	return `
-		<header>
-			<h1>Race Results</h1>
-		</header>
-		<main>
-			<h3>Race Results</h3>
-			<p>The race is done! Here are the final results:</p>
-			${results.join('')}
-			<a href="/race">Start a new race</a>
-		</main>
-	`
+    let count = 1;
+
+    positions = positions.sort((a, b) => (a.segment > b.segment) ? -1 : 1);
+
+    const results = positions.map((p, index) => {
+        const isWinner = (index === 0) ? ' (Winner)' : '';
+        return `
+            <tr>
+                <td>
+                    <h3>${count++} - ${p.driver_name}${isWinner}</h3>
+                </td>
+            </tr>
+        `;
+    });
+
+    return `
+        <header>
+            <h1>Race Results</h1>
+        </header>
+        <main>
+            <h3>Race Results</h3>
+            <p>The race is done! Here are the final results:</p>
+            <table>
+                ${results.join('')}
+            </table>
+            <a href="/race">Start a new race</a>
+        </main>
+    `;
 }
 
 function raceProgress(positions) {
@@ -329,7 +346,6 @@ function defaultFetchOpts() {
 	}
 }
 
-// TODO - Make a fetch call (with error handling!) to each of the following API endpoints 
 
 async function getTracks() {
     try {
@@ -353,46 +369,83 @@ async function getRacers() {
     }
 }
 
-function createRace(player_id, track_id) {
-	player_id = parseInt(player_id)
-	track_id = parseInt(track_id)
-	const body = { player_id, track_id }
-	
-	return fetch(`${SERVER}/api/races`, {
-		method: 'POST',
-		...defaultFetchOpts(),
-		dataType: 'jsonp',
-		body: JSON.stringify(body)
-	})
-	.then(res => res.json())
-	.catch(err => console.log("Problem with createRace request::", err))
+async function createRace(player_id, track_id) {
+    player_id = parseInt(player_id);
+    track_id = parseInt(track_id);
+    const body = { player_id, track_id };
+
+    console.log("Creating race with body:", body);
+
+    try {
+        const response = await fetch(`${SERVER}/api/races`, {
+            method: 'POST',
+            ...defaultFetchOpts(),
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to create race: ${response.statusText} - ${rawResponse}`);
+        }
+
+        const race = await response.json();
+        console.log("Parsed Race Response:", race);
+
+        if (!race || !race.ID) {
+            throw new Error("Race creation failed, no valid race_id returned.");
+        }
+
+        return race;
+    } catch (error) {
+        console.error("Problem with createRace request:", error);
+        throw error;
+    }
 }
 
 async function getRace(id) {
+    if (!id) {
+        console.error("Invalid race ID:", id);
+        return;
+    }
+
     try {
         const response = await fetch(`${SERVER}/api/races/${id}`);
-        if (!response.ok) throw new Error("response was not ok");
+        if (!response.ok) {
+            throw new Error("response was not ok");
+        }
+
         const raceInfo = await response.json();
+        console.log("Race Info:", raceInfo);
         return raceInfo;
     } catch (error) {
         console.error("Problem with getRace request:", error);
     }
 }
 
-function startRace(id) {
-	return fetch(`${SERVER}/api/races/${id}/start`, {
-		method: 'POST',
-		...defaultFetchOpts(),
-	})
-	.then(res => res.json())
-	.catch(err => console.log("Problem with getRace request::", err))
+async function startRace(id) {
+    try {
+        let response = await fetch(`${SERVER}/api/races/${id}/start`, {
+            method: 'POST',
+            ...defaultFetchOpts(),
+        });
+      
+    } catch (error) {
+        console.error("Problem with starting the race:", error);
+    }
 }
-
 function accelerate(id) {
     return fetch(`${SERVER}/api/races/${id}/accelerate`, {
         method: 'POST',
-        ...defaultFetchOpts(),
+        headers: {
+            'Content-Type': 'application/json'
+        }
     })
-    .then(res => res.json())
-    .catch(err => console.log("Problem with accelerate request:", err));
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response;
+    })
+    .catch(error => {
+        console.error(`Error accelerating race with ID ${id}:`, error);
+    });
 }
